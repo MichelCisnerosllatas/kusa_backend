@@ -1,0 +1,84 @@
+name: Deploy Laravel API to cPanel
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      DEPLOY_TARGET: ${{ github.ref_name == 'main' && vars.CPANEL_TARGET_PROD || vars.CPANEL_TARGET_DEV }}
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Validar configuración
+        run: |
+          for v in CPANEL_HOST CPANEL_USER CPANEL_PORT DEPLOY_TARGET; do
+            if [ -z "${!v}" ]; then
+              echo "ERROR: falta la variable $v"
+              exit 1
+            fi
+          done
+        env:
+          CPANEL_HOST: ${{ vars.CPANEL_HOST }}
+          CPANEL_USER: ${{ vars.CPANEL_USER }}
+          CPANEL_PORT: ${{ vars.CPANEL_PORT }}
+
+      - name: Configurar PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Instalar dependencias Composer
+        run: composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-progress
+
+      - name: Deploy por SSH con rsync
+        uses: easingthemes/ssh-deploy@v5
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+          REMOTE_HOST: ${{ vars.CPANEL_HOST }}
+          REMOTE_USER: ${{ vars.CPANEL_USER }}
+          REMOTE_PORT: ${{ vars.CPANEL_PORT }}
+          SOURCE: "./"
+          TARGET: ${{ env.DEPLOY_TARGET }}
+          EXCLUDE: "/.git/, /.github/, /node_modules/, /tests/, /.env, /storage/, /bootstrap/cache/"
+
+      - name: Ejecutar comandos Laravel en servidor
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.CPANEL_HOST }}
+          username: ${{ vars.CPANEL_USER }}
+          key: ${{ secrets.CPANEL_SSH_KEY }}
+          port: ${{ vars.CPANEL_PORT }}
+          script: |
+            set -e
+            cd "${{ env.DEPLOY_TARGET }}"
+
+            mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+            chmod -R 775 storage bootstrap/cache || true
+
+            if [ ! -f .env ]; then
+              echo "ERROR: No existe el archivo .env en el servidor."
+              exit 1
+            fi
+
+            APP_KEY_VALUE=$(grep '^APP_KEY=' .env | cut -d '=' -f2-)
+            if [ -z "$APP_KEY_VALUE" ]; then
+              php artisan key:generate --force
+            fi
+
+            php artisan optimize:clear
+            php artisan migrate --force
+            php artisan storage:link || true
+            php artisan config:cache
+            php artisan route:cache
