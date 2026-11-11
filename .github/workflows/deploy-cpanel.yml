@@ -51,7 +51,7 @@ jobs:
           REMOTE_PORT: ${{ vars.CPANEL_PORT }}
           SOURCE: "./"
           TARGET: ${{ env.DEPLOY_TARGET }}
-          EXCLUDE: "/.git/, /.github/, /node_modules/, /tests/, /.env, /storage/, /bootstrap/cache/"
+          EXCLUDE: "/.git/, /.github/, /node_modules/, /tests/, /.env, /storage/, /bootstrap/cache/*"
 
       - name: Ejecutar comandos Laravel en servidor
         uses: appleboy/ssh-action@v1.0.3
@@ -60,6 +60,7 @@ jobs:
           username: ${{ vars.CPANEL_USER }}
           key: ${{ secrets.CPANEL_SSH_KEY }}
           port: ${{ vars.CPANEL_PORT }}
+          use_insecure_cipher: true
           script: |
             set -e
             cd "${{ env.DEPLOY_TARGET }}"
